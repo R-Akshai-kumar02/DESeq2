@@ -1,0 +1,147 @@
+library(tidyverse)
+library(GEOquery)
+library(DESeq2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+counts <- read.table(
+  "GSE180313_raw_counts_GRCh38.p13_NCBI.tsv",
+  header = TRUE,
+  sep = "\t",
+  row.names = 1,
+  check.names = FALSE
+)
+
+gse <- getGEO("GSE180313", GSEMatrix = TRUE)
+
+
+sample_info <- pData(gse[[1]])
+
+sample_meta <- data.frame(id= rownames(sample_info), condion = sample_info$`disease state:ch1`, 
+                          stringsAsFactors = FALSE)
+rownames(sample_meta) <- sample_meta$id
+all(colnames(counts) == rownames(sample_meta))
+sample_meta$condion <- factor(sample_meta$condion)
+
+dd <- DESeqDataSetFromMatrix(countData = counts, colData = sample_meta,design = ~condion)
+
+ke <- rowSums(counts(dd)) >= 10
+dd <- dd[ke,]
+
+dds <- DESeq(dd)
+
+result <- results(dds)
+
+res <- as.data.frame(result)
+#add gene symbol
+gene.df <- bitr(
+  rownames(res),
+  fromType = "ENTREZID",
+  toType = "SYMBOL",
+  OrgDb = org.Hs.eg.db
+)
+res$ENTREZID <- rownames(res)
+res_annot <- merge(res, gene.df, by = "ENTREZID")
+#filter
+res <- na.omit(res_annot)
+deg <- res[abs(res$log2FoldChange) > 1 & res$padj < 0.05, ]
+top20_up <- deg %>%
+  arrange(desc(log2FoldChange)) %>%
+  head(20)
+
+top20_up
+#plot
+
+library(EnhancedVolcano)
+
+EnhancedVolcano(deg,
+                lab = deg$SYMBOL,
+                x = 'log2FoldChange',
+                y = 'padj',
+                pCutoff = 0.05,
+                FCcutoff = 1,
+                pointSize = 2.5,
+                labSize = 4,
+                colAlpha = 0.8,
+                title = 'Volcano Plot of DEGs')
+#MA pot
+plotMA(dds, ylim = c(-5,5), main = "MA Plot")
+
+#heatmap
+library(pheatmap)
+
+top20 <- deg %>% arrange(padj) %>% head(20)
+mat <- assay(dds)[top20$ENTREZID, ]
+mat <- log2(mat + 1)
+# Replace rownames with gene symbols
+rownames(mat) <- top20$SYMBOL
+
+pheatmap(mat,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         annotation_col = sample_meta["condion"],
+         main = "Top 20 DEGs Heatmap")
+
+#bar ggplot
+library(ggplot2)
+
+top_genes <- deg %>% arrange(padj) %>% head(10)
+
+ggplot(top_genes, aes(x = reorder(SYMBOL, log2FoldChange), y = log2FoldChange, fill = log2FoldChange > 0)) +
+  geom_bar(stat = 'identity') +
+  coord_flip() +
+  scale_fill_manual(values = c("red","blue"), labels = c("Down","Up")) +
+  labs(title = "Top 10 DEGs", x = "Gene Symbol", y = "log2 Fold Change") +
+  theme_minimal()
+
+#functional analysis
+#go ontology
+
+go <- enrichGO(
+  gene = deg$ENTREZID,
+  OrgDb = org.Hs.eg.db,
+  ont = "ALL",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE
+)
+go_df <- as.data.frame(go)
+top_go <- go_df %>% arrange(p.adjust) %>% head(10)
+top_go[, c("ID", "Description", "GeneRatio", "p.adjust", "geneID")]
+#plot for GO
+
+barplot(go, showCategory=10, title="Top 10 Enriched GO Terms")
+dotplot(go, showCategory=10, title="GO Enrichment Dotplot")
+
+#KEEG
+kegg <- enrichKEGG(
+  gene = deg$ENTREZID,
+  organism = "hsa",
+  pvalueCutoff = 0.05
+)
+#gene symbol
+kegg <- setReadable(kegg, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+kegg_df <- as.data.frame(kegg)
+top_kegg <- kegg_df %>% arrange(p.adjust) %>% head(10)
+tp <- top_kegg[, c("ID", "Description", "GeneRatio", "p.adjust", "geneID")]
+top<- as.data.frame(tp)
+#plot kegg 
+barplot(kegg, showCategory = 10, title = "Top 10 KEGG Pathways")
+kegg_up <- kegg
+# We manually overwrite the gene list in the enrichment object for visualization purposes
+kegg_up@gene <- deg$ENTREZID[deg$log2FoldChange > 0]
+
+library(enrichplot)
+cnetplot(kegg_up, 
+         showCategory = 5, 
+         foldChange = deg$log2FoldChange, 
+         circular = FALSE, 
+         colorEdge = TRUE) + 
+  ggtitle("Network of Upregulated Genes in Top KEGG Pathways")
+
+
+
+
