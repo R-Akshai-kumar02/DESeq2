@@ -97,5 +97,23 @@ ggplot(top_genes, aes(x = reorder(SYMBOL, log2FoldChange), y = log2FoldChange, f
   theme_minimal()
 
 
+#KEEG
+kegg <- enrichKEGG(
+  gene = deg$ENTREZID,
+  organism = "hsa",
+  pvalueCutoff = 0.05
+)
+#gene symbol
+kegg <- setReadable(kegg, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+kegg_df <- as.data.frame(kegg)
+top_kegg <- kegg_df %>% arrange(p.adjust) %>% head(10)
+tp <- top_kegg[, c("ID", "Description", "GeneRatio", "p.adjust", "geneID")]
+top<- as.data.frame(tp)
+#plot kegg 
+barplot(kegg, showCategory = 10, title = "Top 10 KEGG Pathways")
+kegg_up <- kegg
+# We manually overwrite the gene list in the enrichment object for visualization purposes
+kegg_up@gene <- deg$ENTREZID[deg$log2FoldChange > 0]
+
 
 
