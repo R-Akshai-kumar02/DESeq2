@@ -48,7 +48,11 @@ The analysis identified several differentially expressed genes and enriched biol
 📷 Outputs
 
 Volcano Plot
+
 Heatmap
+
 MA Plot
+
 KEGG Enrichment Plot
+
 Differential Gene Expression Summary
